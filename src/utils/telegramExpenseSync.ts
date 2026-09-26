@@ -10,6 +10,37 @@ export interface TelegramBotInfo {
   is_bot: boolean;
   first_name: string;
   username: string;
+  can_join_groups?: boolean;
+  can_read_all_group_messages?: boolean;
+  supports_inline_queries?: boolean;
+}
+
+export interface TelegramWebhookInfo {
+  url: string;
+  has_custom_certificate: boolean;
+  pending_update_count: number;
+  last_error_date?: number;
+  last_error_message?: string;
+  max_connections?: number;
+  ip_address?: string;
+}
+
+export interface TelegramDiagnosticsResult {
+  ok: boolean;
+  latencyMs: number;
+  botInfo?: TelegramBotInfo;
+  webhookInfo?: TelegramWebhookInfo;
+  hasWebhookConflict: boolean;
+  pendingUpdatesCount?: number;
+  recentMessagesPreview?: {
+    id: number;
+    sender: string;
+    text: string;
+    hasPhoto: boolean;
+    date: string;
+  }[];
+  error?: string;
+  recommendations: string[];
 }
 
 export interface ParsedExpenseResult {
@@ -326,6 +357,186 @@ export async function replyExpenseSuccess(
   } catch (e) {
     console.error('Failed to send reply to Telegram chat:', e);
     return false;
+  }
+}
+
+/**
+ * Run comprehensive diagnostics on the Telegram Bot
+ * Checks connectivity, latency, bot profile, webhook status, and pending updates
+ */
+export async function runTelegramDiagnostics(token: string): Promise<TelegramDiagnosticsResult> {
+  const recommendations: string[] = [];
+  if (!token || !token.trim()) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      hasWebhookConflict: false,
+      error: 'กรุณากรอก Bot Token ก่อนทำการตรวจสอบ',
+      recommendations: ['สร้าง Bot Token จาก @BotFather บน Telegram ด้วยคำสั่ง /newbot']
+    };
+  }
+
+  const cleanToken = token.trim();
+  const startTime = performance.now();
+
+  try {
+    // 1. Check getMe
+    const meRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+    const latencyMs = Math.round(performance.now() - startTime);
+    const meData = await meRes.json();
+
+    if (!meRes.ok || !meData.ok) {
+      const errDescription = meData.description || `HTTP ${meRes.status}`;
+      if (errDescription.includes('Unauthorized') || errDescription.includes('Not Found')) {
+        recommendations.push('Bot Token ไม่ถูกต้องหรือถูกเพิกถอน กรุณาคัดลอก Token ใหม่จาก @BotFather');
+      } else {
+        recommendations.push(`เกิดข้อผิดพลาดจาก Telegram API: ${errDescription}`);
+      }
+      return {
+        ok: false,
+        latencyMs,
+        hasWebhookConflict: false,
+        error: errDescription,
+        recommendations
+      };
+    }
+
+    const botInfo: TelegramBotInfo = meData.result;
+
+    // 2. Check getWebhookInfo
+    let webhookInfo: TelegramWebhookInfo | undefined = undefined;
+    let hasWebhookConflict = false;
+
+    try {
+      const webhookRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getWebhookInfo`);
+      const webhookData = await webhookRes.json();
+      if (webhookRes.ok && webhookData.ok && webhookData.result) {
+        webhookInfo = webhookData.result;
+        if (webhookInfo?.url && webhookInfo.url.trim().length > 0) {
+          hasWebhookConflict = true;
+          recommendations.push(`บอทมีการตั้ง Webhook ไปที่ "${webhookInfo.url}" ทำให้ Telegram ไม่อนุญาตให้ใช้ getUpdates ดึงข้อมูล กรุณากดปุ่ม "ปลด Webhook" ด้านล่างเพื่อให้แอปดึงข้อมูลได้`);
+        }
+      }
+    } catch {
+      // Non-fatal if webhook check fails
+    }
+
+    // 3. Check getUpdates if no webhook conflict
+    let pendingUpdatesCount = 0;
+    const recentMessagesPreview: TelegramDiagnosticsResult['recentMessagesPreview'] = [];
+
+    if (!hasWebhookConflict) {
+      try {
+        const updatesRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getUpdates?limit=10`);
+        const updatesData = await updatesRes.json();
+        if (updatesRes.ok && updatesData.ok && Array.isArray(updatesData.result)) {
+          pendingUpdatesCount = updatesData.result.length;
+          for (const u of updatesData.result.slice(-5)) {
+            const m = u.message;
+            if (m) {
+              const sender = [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') || m.from?.username || 'User';
+              recentMessagesPreview.push({
+                id: m.message_id,
+                sender,
+                text: m.text || m.caption || (m.photo ? '[รูปภาพสลิปโอนเงิน]' : '[ไม่มีข้อความ]'),
+                hasPhoto: !!(m.photo && m.photo.length > 0),
+                date: m.date ? new Date(m.date * 1000).toLocaleString('th-TH') : '-'
+              });
+            }
+          }
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Check general recommendations
+    if (pendingUpdatesCount === 0 && !hasWebhookConflict) {
+      recommendations.push(`ยังไม่มีข้อความค้างในบอท: ให้เปิดแอป Telegram ค้นหา @${botInfo.username} แล้วกด Start จากนั้นลองพิมพ์ "ซื้อหมู 850" หรือส่งรูปสลิป`);
+    } else if (pendingUpdatesCount > 0) {
+      recommendations.push(`พบล่าสุด ${pendingUpdatesCount} ข้อความที่พร้อมให้ดึงเข้าสู่ระบบ สามารถกดปุ่ม "ดึงข้อมูลจาก Telegram" ได้ทันที`);
+    }
+
+    return {
+      ok: true,
+      latencyMs,
+      botInfo,
+      webhookInfo,
+      hasWebhookConflict,
+      pendingUpdatesCount,
+      recentMessagesPreview,
+      recommendations
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      latencyMs: Math.round(performance.now() - startTime),
+      hasWebhookConflict: false,
+      error: msg || 'เชื่อมต่อกับ Telegram API ล้มเหลว กรุณาตรวจสอบอินเทอร์เน็ต',
+      recommendations: ['ตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและไฟร์วอลล์', 'ลองใหม่อีกครั้งในภายหลัง']
+    };
+  }
+}
+
+/**
+ * Delete active webhook from bot so getUpdates polling can work
+ */
+export async function deleteTelegramWebhook(token: string): Promise<{ success: boolean; message: string }> {
+  if (!token || !token.trim()) return { success: false, message: 'กรุณากรอก Bot Token' };
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token.trim()}/deleteWebhook?drop_pending_updates=false`);
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      return { success: true, message: 'ปลด Webhook เรียบร้อยแล้ว ตอนนี้บอทสามารถรับข้อความผ่านระบบ POS ได้ตามปกติ' };
+    }
+    return { success: false, message: data.description || `HTTP ${res.status}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, message: msg || 'ปลด Webhook ล้มเหลว' };
+  }
+}
+
+/**
+ * Send a test ping message to a specific Chat ID or user's Telegram
+ */
+export async function sendTelegramTestPing(
+  token: string,
+  chatId: string | number,
+  customText?: string
+): Promise<{ success: boolean; message: string }> {
+  if (!token || !token.trim()) return { success: false, message: 'ไม่พบ Bot Token' };
+  if (!chatId) return { success: false, message: 'กรุณาระบุ Chat ID ปลายทาง (สามารถดู Chat ID ได้จากการทักบอท)' };
+
+  const timeStr = new Date().toLocaleString('th-TH');
+  const text = customText || 
+`🤖 <b>ทดสอบการเชื่อมต่อ Kaprao POS Bot</b>
+━━━━━━━━━━━━━━━━━━
+✅ การเชื่อมต่อกับ Telegram Bot API ทำงานปกติ 100%
+⏰ เวลาทดสอบ: ${timeStr}
+🏪 ระบบพร้อมรับรูปสลิปและรายการค่าใช้จ่ายแล้ว!
+━━━━━━━━━━━━━━━━━━
+💡 <i>ทดลองส่งสลิปโอนเงิน หรือพิมพ์ "ซื้อหมูสับ 450" แล้วไปที่ระบบ POS กด "ดึงข้อมูลจาก Telegram" ได้เลย</i>`;
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token.trim()}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML'
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      return { success: true, message: 'ส่งข้อความทดสอบสำเร็จ! ตรวจสอบแชทใน Telegram ได้เลย' };
+    }
+    return { success: false, message: data.description || `HTTP ${res.status}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, message: msg || 'ส่งข้อความทดสอบล้มเหลว' };
   }
 }
 

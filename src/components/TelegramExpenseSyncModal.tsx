@@ -4,12 +4,14 @@ import {
   Bot, RefreshCw, Send, Check, Trash2, Edit3, Image, 
   Sparkles, ExternalLink, QrCode, AlertCircle, CheckCircle2,
   Clock, ArrowRight, ShieldCheck, Upload, X, Eye, FileText,
-  DollarSign, ChevronDown, CheckCheck
+  DollarSign, ChevronDown, CheckCheck, Activity, Terminal,
+  HelpCircle, Wrench, Zap, Info, Play, MessageSquare, AlertTriangle
 } from 'lucide-react';
 import { 
   fetchTelegramExpenseUpdates, verifyTelegramBot, replyExpenseSuccess,
   getTelegramExpenseQueue, saveTelegramExpenseQueue, generateMockTelegramMessages,
-  getCategoryThaiName, parseThaiExpenseMessage, TelegramBotInfo 
+  getCategoryThaiName, parseThaiExpenseMessage, TelegramBotInfo,
+  runTelegramDiagnostics, deleteTelegramWebhook, sendTelegramTestPing, TelegramDiagnosticsResult
 } from '../utils/telegramExpenseSync';
 
 interface TelegramExpenseSyncModalProps {
@@ -73,6 +75,17 @@ export default function TelegramExpenseSyncModal({
   // Manual slip upload test
   const [directSlipImage, setDirectSlipImage] = useState<string | null>(null);
   const [directSlipNote, setDirectSlipNote] = useState('');
+
+  // Diagnostic & Inspection States
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<TelegramDiagnosticsResult | null>(null);
+  const [isRunningDiag, setIsRunningDiag] = useState(false);
+  const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
+  const [isSendingPing, setIsSendingPing] = useState(false);
+  const [testChatId, setTestChatId] = useState<string>(() => {
+    return notificationSettings?.telegramChatId || localStorage.getItem('kp_telegram_chat_id') || '';
+  });
+  const [testPingResult, setTestPingResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Sync token from notificationSettings if updated
   useEffect(() => {
@@ -187,6 +200,87 @@ export default function TelegramExpenseSyncModal({
       type: 'success',
       message: 'สร้างสลิปและข้อความจำลองจาก Telegram 4 รายการสำเร็จ!'
     });
+  };
+
+  // Run Telegram Diagnostics
+  const handleRunDiagnostics = async () => {
+    if (!token.trim()) {
+      setVerifyError('กรุณากรอก Telegram Bot Token ก่อนทำการตรวจสอบ');
+      setVerifyStatus('error');
+      setShowDiagnostics(true);
+      return;
+    }
+
+    setIsRunningDiag(true);
+    setShowDiagnostics(true);
+    setTestPingResult(null);
+
+    const result = await runTelegramDiagnostics(token);
+    setDiagnostics(result);
+    setIsRunningDiag(false);
+
+    if (result.botInfo) {
+      setBotInfo(result.botInfo);
+      setVerifyStatus('success');
+      if (onUpdateNotificationSettings && notificationSettings) {
+        onUpdateNotificationSettings({
+          ...notificationSettings,
+          telegramToken: token.trim(),
+          telegramBotUsername: result.botInfo.username
+        });
+      }
+    } else if (result.error) {
+      setVerifyStatus('error');
+      setVerifyError(result.error);
+    }
+  };
+
+  // Delete active webhook if conflict detected
+  const handleDeleteWebhook = async () => {
+    if (!token.trim()) return;
+    setIsDeletingWebhook(true);
+    const res = await deleteTelegramWebhook(token);
+    setIsDeletingWebhook(false);
+
+    if (res.success) {
+      setFetchNotification({ type: 'success', message: res.message });
+      // Re-run diagnostics to refresh info
+      const result = await runTelegramDiagnostics(token);
+      setDiagnostics(result);
+    } else {
+      setFetchNotification({ type: 'error', message: res.message });
+    }
+  };
+
+  // Send a test ping message to Telegram
+  const handleSendTestPing = async () => {
+    if (!token.trim()) {
+      setTestPingResult({ success: false, message: 'กรุณากรอก Bot Token' });
+      return;
+    }
+    if (!testChatId.trim()) {
+      setTestPingResult({
+        success: false,
+        message: 'กรุณากรอก Chat ID เช่น 123456789 (สามารถดูได้จากการทักหา @userinfobot ใน Telegram)'
+      });
+      return;
+    }
+
+    setIsSendingPing(true);
+    setTestPingResult(null);
+
+    // Save testChatId to storage & settings
+    localStorage.setItem('kp_telegram_chat_id', testChatId.trim());
+    if (onUpdateNotificationSettings && notificationSettings) {
+      onUpdateNotificationSettings({
+        ...notificationSettings,
+        telegramChatId: testChatId.trim()
+      });
+    }
+
+    const res = await sendTelegramTestPing(token, testChatId.trim());
+    setIsSendingPing(false);
+    setTestPingResult(res);
   };
 
   // Import single Telegram message into Expenses
@@ -379,6 +473,22 @@ export default function TelegramExpenseSyncModal({
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => {
+                setShowDiagnostics(prev => !prev);
+                if (!diagnostics && !isRunningDiag) {
+                  handleRunDiagnostics();
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer ${
+                showDiagnostics 
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow' 
+                  : 'bg-slate-800 hover:bg-slate-750 text-slate-300 border-slate-700'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 text-amber-400" />
+              <span>{showDiagnostics ? 'ซ่อนเครื่องมือตรวจบอท' : '🛠️ ตรวจสอบ & วินิจฉัยบอท'}</span>
+            </button>
+            <button
               onClick={() => setShowGuide(prev => !prev)}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded-xl text-xs font-semibold border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
             >
@@ -387,7 +497,7 @@ export default function TelegramExpenseSyncModal({
             </button>
             <button
               onClick={onClose}
-              className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer"
+              className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -508,6 +618,17 @@ export default function TelegramExpenseSyncModal({
 
                 <button
                   type="button"
+                  onClick={handleRunDiagnostics}
+                  disabled={isRunningDiag}
+                  className="px-3.5 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  title="ตรวจสอบเชิงลึก เช็ค Webhook ความเร็ว และตรวจข้อความค้าง"
+                >
+                  <Activity className={`w-3.5 h-3.5 ${isRunningDiag ? 'animate-spin' : ''}`} />
+                  <span>{isRunningDiag ? 'กำลังตรวจ...' : '🛠️ วินิจฉัยบอท'}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={handleFetchUpdates}
                   disabled={isFetching}
                   className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-teal-600 hover:from-indigo-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
@@ -525,6 +646,273 @@ export default function TelegramExpenseSyncModal({
               </p>
             )}
           </div>
+
+          {/* Diagnostic & Inspector Panel Collapsible */}
+          {showDiagnostics && (
+            <div className="bg-slate-950/95 border border-amber-500/30 rounded-2xl p-5 space-y-4 shadow-xl animate-fadeIn">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      เครื่องมือตรวจสอบ & วินิจฉัย Telegram Bot (Bot Inspector)
+                      {isRunningDiag && (
+                        <span className="text-[10px] text-amber-400 font-mono animate-pulse">
+                          [กำลังทดสอบ API...]
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      ตรวจเช็คการเชื่อมต่อ Latency, ตรวจสอบ Webhook ค้าง และทดสอบส่งข้อความหาบอท
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleRunDiagnostics}
+                    disabled={isRunningDiag}
+                    className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-xs font-semibold border border-amber-500/30 transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isRunningDiag ? 'animate-spin' : ''}`} />
+                    <span>ตรวจซ้ำ</span>
+                  </button>
+                  <button
+                    onClick={() => setShowDiagnostics(false)}
+                    className="text-slate-400 hover:text-white p-1"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Status summary grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                {/* 1. Latency */}
+                <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
+                  <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    Telegram API Latency
+                  </span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg font-black text-white">
+                      {diagnostics ? `${diagnostics.latencyMs} ms` : '-'}
+                    </span>
+                    {diagnostics && (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        diagnostics.latencyMs < 500 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {diagnostics.latencyMs < 500 ? 'เสถียรมาก' : 'ปานกลาง'}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">
+                    {diagnostics?.ok ? 'Telegram Server ตอบกลับปกติ' : 'ยังไม่ได้เชื่อมต่อ'}
+                  </span>
+                </div>
+
+                {/* 2. Bot Profile */}
+                <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
+                  <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+                    <Bot className="w-3 h-3 text-indigo-400" />
+                    บัญชีบอทที่เชื่อมต่อ
+                  </span>
+                  <p className="text-sm font-bold text-white truncate">
+                    {diagnostics?.botInfo?.username ? `@${diagnostics.botInfo.username}` : (botInfo?.username ? `@${botInfo.username}` : 'ยังไม่ระบุ')}
+                  </p>
+                  <span className="text-[10px] text-slate-500 block truncate">
+                    {diagnostics?.botInfo?.first_name || 'ชื่อบอท'} • ID: {diagnostics?.botInfo?.id || '-'}
+                  </span>
+                </div>
+
+                {/* 3. Webhook Status */}
+                <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
+                  <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-teal-400" />
+                    สถานะ Webhook
+                  </span>
+                  <div>
+                    {diagnostics?.hasWebhookConflict ? (
+                      <span className="text-xs font-bold text-red-400 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                        มี Webhook ค้างอยู่!
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 shrink-0" />
+                        ไม่มี Webhook (ปกติ)
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">
+                    {diagnostics?.hasWebhookConflict ? 'ทำให้ดึงข้อมูลผ่าน getUpdates ไม่ได้' : 'สามารถดึงข้อมูล getUpdates ได้'}
+                  </span>
+                </div>
+
+                {/* 4. Pending updates */}
+                <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-1">
+                  <span className="text-[10px] font-semibold text-slate-400 flex items-center gap-1">
+                    <MessageSquare className="w-3 h-3 text-blue-400" />
+                    ข้อความค้างใน Telegram
+                  </span>
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-lg font-black text-white">
+                      {diagnostics?.pendingUpdatesCount !== undefined ? diagnostics.pendingUpdatesCount : '-'}
+                    </span>
+                    <span className="text-xs text-slate-400">รายการ</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">
+                    {diagnostics?.pendingUpdatesCount && diagnostics.pendingUpdatesCount > 0 ? 'กดดึงข้อมูลเพื่อนำเข้าได้ทันที' : 'ไม่มีข้อความใหม่ค้างอยู่'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Webhook Warning and Clear Button */}
+              {diagnostics?.hasWebhookConflict && (
+                <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="space-y-1">
+                    <p className="font-bold text-red-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                      ตรวจพบบอทเปิดใช้งาน Webhook ไปที่:
+                    </p>
+                    <code className="text-[11px] text-red-200 bg-red-900/30 px-2 py-0.5 rounded font-mono break-all block">
+                      {diagnostics.webhookInfo?.url}
+                    </code>
+                    <p className="text-[11px] text-slate-400">
+                      Telegram จะระงับการทำงานของปุ่ม "ดึงข้อมูลจาก Telegram" ทันทีหากมี Webhook ค้างอยู่ กรุณากดปลด Webhook เพื่อใช้งาน
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleDeleteWebhook}
+                    disabled={isDeletingWebhook}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold text-xs shadow transition-all cursor-pointer whitespace-nowrap self-start sm:self-center"
+                  >
+                    {isDeletingWebhook ? 'กำลังปลด...' : '🔓 ปลด Webhook เดี๋ยวนี้'}
+                  </button>
+                </div>
+              )}
+
+              {/* Diagnostic Recommendations */}
+              {diagnostics?.recommendations && diagnostics.recommendations.length > 0 && (
+                <div className="bg-slate-900/70 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-amber-400" />
+                    ผลการวิเคราะห์ & ข้อเสนอแนะจากระบบ:
+                  </span>
+                  <ul className="space-y-1.5 text-xs text-slate-300">
+                    {diagnostics.recommendations.map((rec, idx) => (
+                      <li key={idx} className="flex items-start gap-2">
+                        <span className="text-amber-400 font-bold shrink-0">•</span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Recent Messages Preview if any */}
+              {diagnostics?.recentMessagesPreview && diagnostics.recentMessagesPreview.length > 0 && (
+                <div className="bg-slate-900/70 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                    ข้อความล่าสุดที่ตรวจพบใน Telegram Server:
+                  </span>
+                  <div className="space-y-1.5">
+                    {diagnostics.recentMessagesPreview.map((msg) => (
+                      <div key={msg.id} className="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 font-mono text-[10px]">
+                            {msg.sender}
+                          </span>
+                          <span className="text-slate-200 truncate max-w-xs sm:max-w-md">
+                            {msg.text}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 shrink-0 font-mono">
+                          {msg.date}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Direct Test Message Sender (Ping Test) */}
+              <div className="bg-gradient-to-r from-slate-900 to-indigo-950/30 p-4 rounded-xl border border-indigo-900/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-indigo-400" />
+                    ทดสอบส่งข้อความจากบอทเข้า Telegram (Test Ping)
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    ทดสอบว่าบอทสามารถส่งข้อความถึงคุณได้หรือไม่
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="flex-1 relative">
+                    <input
+                      type="text"
+                      placeholder="กรอก Chat ID ของคุณ (เช่น 123456789)"
+                      value={testChatId}
+                      onChange={(e) => setTestChatId(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 text-white text-xs rounded-xl px-3 py-2 font-mono focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSendTestPing}
+                    disabled={isSendingPing}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <Send className={`w-3.5 h-3.5 ${isSendingPing ? 'animate-pulse' : ''}`} />
+                    <span>{isSendingPing ? 'กำลังส่ง...' : 'ส่งข้อความทดสอบ'}</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                  <span>💡 <b>วิธีหา Chat ID:</b> ใน Telegram ให้ค้นหา <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-mono">@userinfobot</a> แล้วกด Start จะได้ตัวเลข Id ทันที</span>
+                </div>
+
+                {testPingResult && (
+                  <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 ${
+                    testPingResult.success ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300' : 'bg-red-950/40 border-red-800 text-red-300'
+                  }`}>
+                    {testPingResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" /> : <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />}
+                    <span>{testPingResult.message}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Troubleshooting Checklist */}
+              <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
+                <p className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
+                  เช็คลิสต์ตรวจสอบเมื่อบอทไม่ดึงข้อมูล (Troubleshooting Checklist):
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400">
+                  <div className="flex items-start gap-1.5">
+                    <span className="text-indigo-400 font-bold">1.</span>
+                    <span>ส่งหาถูกบอทหรือไม่: ต้องส่งหาบอทที่คุณสร้าง <b className="text-white">(@{botUsername || 'ชื่อบอท'})</b> ไม่ใช่ @BotFather</span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="text-indigo-400 font-bold">2.</span>
+                    <span>กด Start หรือยัง: เปิดแชทกับบอทแล้วต้องกดปุ่ม <b className="text-white">Start</b> ด้านล่างอย่างน้อย 1 ครั้ง</span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="text-indigo-400 font-bold">3.</span>
+                    <span>ถ้าใช้ในกลุ่ม: หากดึงบอทเข้ากลุ่มร้าน ให้ไปที่ @BotFather พิมพ์ /setprivacy แล้วเลือก Disable เพื่อให้บอทอ่านข้อความในกลุ่มได้</span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="text-indigo-400 font-bold">4.</span>
+                    <span>ทดสอบผ่านเบราว์เซอร์: ลองเปิด <code className="text-indigo-300 bg-slate-950 px-1 py-0.5 rounded">https://api.telegram.org/bot{token ? `${token.substring(0, 10)}...` : '<TOKEN>'}/getMe</code></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Quick Action Notification Banner */}
           {fetchNotification && (
