@@ -1,0 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@keyframes shake-fast {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px) rotate(-0.5deg); }
+  40% { transform: translateX(5px) rotate(0.5deg); }
+  60% { transform: translateX(-5px) rotate(-0.5deg); }
+  80% { transform: translateX(5px) rotate(0.5deg); }
+}
+
+.shake-active {
+  animation: shake-fast 0.15s ease-in-out;
+}
+
+/* Custom fine scrollbar styling */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #ef4444;
+}
+
+/* Print friendly styling */
+@media print {
+  /* Hide all elements on the page by default */
+  body * {
+    visibility: hidden !important;
+  }
+  
+  /* Make only the print receipt modal and its descendants visible */
+  .print-receipt-modal,
+  .print-receipt-modal *,
+  .print-qr-modal,
+  .print-qr-modal * {
+    visibility: visible !important;
+  }
+
+  /* Style and position the receipt modal container for full-page thermal layout */
+  .print-receipt-modal {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    z-index: 9999999 !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+  }
+
+  .print-receipt-card {
+    width: 100% !important;
+    max-width: 340px !important; /* Ideal 80mm thermal paper width */
+    margin: 0 auto !important;
+    padding: 12px !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  /* Force pure black colors on receipt elements for high contrast printing */
+  .print-receipt-card,
+  .print-receipt-card * {
+    color: #000000 !important;
+    background: transparent !important;
+    text-shadow: none !important;
+  }
+
+  /* Preserve dashed dividers on paper receipt */
+  .print-receipt-card .border-dashed {
+    border-style: dashed !important;
+    border-color: #000000 !important;
+  }
+
+  /* Remove scrollbars and borders */
+  .print-receipt-card ::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* Hide print buttons and close buttons inside the container */
+  .no-print,
+  .no-print * {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+  }
+
+  /* Optimize print page margins */
+  @page {
+    margin: 0 !important;
+    size: portrait;
+  }
+}
+

@@ -1,0 +1,6 @@
+{
+  "name": "Kaprao POS Enterprise",
+  "description": "แพลตฟอร์มบริหารร้านอาหารแบบครบวงจร (POS, ระบบครัว KDS, สต๊อกวัตถุดิบอัตโนมัติ, บัญชีและกำไรขาดทุน, แดชบอร์ดผู้บริหาร และการแจ้งเตือน)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
